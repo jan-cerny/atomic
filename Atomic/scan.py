@@ -1,3 +1,7 @@
+import shutil
+import tempfile
+import subprocess
+
 from . import Atomic
 from . import mount
 from . import util
@@ -21,6 +25,7 @@ def cli(subparser):
     scanp.add_argument("--scan_type", default=None, help=_("define the intended scan type"))
     scanp.add_argument("--list", action='store_true', default=False, help=_("List available scanners"))
     scanp.add_argument("--scanner_args", default=None, help=_("Specify arguments to be passed to the scanner"))
+    scanp.add_argument("--harden", action='store_true', default=False, help=_("Create hardened image after scan"))
     disp_group = scanp.add_mutually_exclusive_group()
     disp_group.add_argument("--verbose", action='store_true', default=False, help=_("Show more output from scanning container"))
     disp_group.add_argument("--json", action='store_true', default=False, help=_("Output results in JSON format"))
@@ -176,6 +181,10 @@ class Scan(Atomic):
             # output results
             if self.useTTY:
                 self.output_results()
+
+            # build a hardened image
+            if self.args.harden:
+                self.harden()
 
             # record environment
             self.record_environment()
@@ -517,3 +526,33 @@ class Scan(Atomic):
 
         with open(summary_file, 'w') as f:
             json.dump(persistent_data, f, indent=4)
+
+    def harden(self):
+        for target in self.scan_list:
+            util.write_out("Hardening target {}.\n".format(target.id))
+            temp_dir = tempfile.mkdtemp()
+            fix_script = os.path.join(self.results_dir, target.id, "fix.sh")
+
+            shutil.copy(fix_script, temp_dir)
+            dockerfile_path = os.path.join(temp_dir, "Dockerfile")
+            with open(dockerfile_path, "w") as f:
+                f.write("FROM " + target.id + "\n")
+                f.write("COPY fix.sh /\n")
+                f.write("RUN chmod +x /fix.sh; /fix.sh\n")
+            docker_build_cmd = ['docker', 'build', '--no-cache', temp_dir]
+            try:
+                build_process = subprocess.run(
+                        docker_build_cmd,
+                        check=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+            except subprocess.CalledProcessError as e:
+                util.write_err("Cannot build hardened image from {}. Docker returned {}.\n".format(target.id, e.returncode))
+                util.write_err("Details:\n{}\n".format(e.stderr.decode("utf-8")))
+                continue
+            build_output = build_process.stdout.decode("utf-8")
+            image_id = build_output.splitlines()[-1].split()[-1]
+            util.write_out("Sucessfully built hardened image {} from {}.\n".format(image_id, target.id))
+            shutil.rmtree(temp_dir)
+        return 0
