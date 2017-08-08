@@ -1,6 +1,6 @@
 import shutil
 import tempfile
-import subprocess
+import docker
 
 from . import Atomic
 from . import mount
@@ -532,27 +532,35 @@ class Scan(Atomic):
             util.write_out("Hardening target {}.\n".format(target.id))
             temp_dir = tempfile.mkdtemp()
             fix_script = os.path.join(self.results_dir, target.id, "fix.sh")
-
-            shutil.copy(fix_script, temp_dir)
-            dockerfile_path = os.path.join(temp_dir, "Dockerfile")
-            with open(dockerfile_path, "w") as f:
-                f.write("FROM " + target.id + "\n")
-                f.write("COPY fix.sh /\n")
-                f.write("RUN chmod +x /fix.sh; /fix.sh\n")
-            docker_build_cmd = ['docker', 'build', '--no-cache', temp_dir]
             try:
-                build_process = subprocess.run(
-                        docker_build_cmd,
-                        check=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
+                shutil.copy(fix_script, temp_dir)
+                dockerfile_path = os.path.join(temp_dir, "Dockerfile")
+                with open(dockerfile_path, "w") as f:
+                    f.write("FROM " + target.id + "\n")
+                    f.write("COPY fix.sh /\n")
+                    f.write("RUN chmod +x /fix.sh; /fix.sh\n")
+                try:
+                    build_output_generator = self.d.build(
+                        path=temp_dir,
+                        nocache=True
                     )
-            except subprocess.CalledProcessError as e:
-                util.write_err("Cannot build hardened image from {}. Docker returned {}.\n".format(target.id, e.returncode))
-                util.write_err("Details:\n{}\n".format(e.stderr.decode("utf-8")))
-                continue
-            build_output = build_process.stdout.decode("utf-8")
-            image_id = build_output.splitlines()[-1].split()[-1]
-            util.write_out("Sucessfully built hardened image {} from {}.\n".format(image_id, target.id))
-            shutil.rmtree(temp_dir)
+                except docker.errors.APIError as e:
+                    raise RuntimeError("Docker exception: {}\n".format(e))
+                build_output = []
+                for item in build_output_generator:
+                    item_dict = eval(item.decode("utf-8"))
+                    if "error" in item_dict:
+                        raise RuntimeError("Error during Docker build {}\n".format(item_dict["error"]))
+                    if self.args.debug:
+                        # setting lf to an empty string
+                        # because there already is "\n" in stream
+                        util.write_out(item_dict["stream"], lf="")
+                    build_output.append(item_dict["stream"])
+                image_id = build_output[-1].split()[-1]
+                util.write_out("Sucessfully built hardened image {} from {}.\n".format(image_id, target.id))
+            except RuntimeError as e:
+                util.write_err("Cannot build hardened image from {}: {}\n"
+                           .format(target.id, e))
+            finally:
+                shutil.rmtree(temp_dir)
         return 0
