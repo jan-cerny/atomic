@@ -529,7 +529,8 @@ class Scan(Atomic):
 
     def harden(self):
         for target in self.scan_list:
-            util.write_out("Hardening target {}.\n".format(target.id))
+            name = self._get_input_name_for_id(target.id)
+            util.write_out("Hardening target {}.\n".format(name))
             temp_dir = tempfile.mkdtemp()
             fix_script = os.path.join(self.results_dir, target.id, "fix.sh")
             try:
@@ -557,10 +558,10 @@ class Scan(Atomic):
                         util.write_out(item_dict["stream"], lf="")
                     build_output.append(item_dict["stream"])
                 image_id = build_output[-1].split()[-1]
-                util.write_out("Sucessfully built hardened image {} from {}.\n".format(image_id, target.id))
+                util.write_out("Sucessfully built hardened image {} from {}.\n".format(image_id, name))
             except RuntimeError as e:
                 util.write_err("Cannot build hardened image from {}: {}\n"
-                           .format(target.id, e))
+                           .format(name, e))
             finally:
                 shutil.rmtree(temp_dir)
         return 0
