@@ -548,7 +548,7 @@ class Scan(Atomic):
                     raise RuntimeError("Docker exception: {}\n".format(e))
                 build_output = []
                 for item in build_output_generator:
-                    item_dict = eval(item.decode("utf-8"))
+                    item_dict = json.loads(item.decode("utf-8"))
                     if "error" in item_dict:
                         raise RuntimeError("Error during Docker build {}\n".format(item_dict["error"]))
                     if self.args.debug:
